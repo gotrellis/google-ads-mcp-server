@@ -1,10 +1,11 @@
 """Environment-variable configuration loaded at server start.
 
-The parent process (clio-idx) writes an authorized_user JSON credentials
-file to a stable per-connector path and passes its location via
-``GOOGLE_APPLICATION_CREDENTIALS``. This module is the single point that
-reads those vars — keep the contract here so changes on the clio-idx side
-have one place to update on this side.
+The parent process (clio-idx) passes the OAuth2 refresh-token credential
+directly as environment variables — ``GOOGLE_ADS_CLIENT_ID``,
+``GOOGLE_ADS_CLIENT_SECRET`` and ``GOOGLE_ADS_REFRESH_TOKEN`` — rather than
+staging an authorized_user JSON file on disk. This module is the single
+point that reads those vars — keep the contract here so changes on the
+clio-idx side have one place to update on this side.
 """
 
 from __future__ import annotations
@@ -19,7 +20,9 @@ class ConfigError(RuntimeError):
 
 @dataclass(frozen=True)
 class ServerConfig:
-    credentials_path: str
+    client_id: str
+    client_secret: str
+    refresh_token: str
     developer_token: str
     # ``None`` when no MCC is configured. Passing a non-numeric placeholder
     # like ``"google_ads"`` to the API surfaces as a cryptic INVALID_CUSTOMER_ID,
@@ -31,21 +34,24 @@ def load_config() -> ServerConfig:
     """Read env vars and validate minimal required inputs.
 
     Raises:
-        ConfigError: When the developer token or credentials file are absent.
-                     A missing file path is a hard error because every API call
-                     downstream would fail with a less actionable message.
+        ConfigError: When the developer token or any of the OAuth2 credential
+                     vars are absent. Each is a hard error because every API
+                     call downstream would otherwise fail with a less
+                     actionable message.
     """
-    credentials_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "")
-    if not credentials_path:
+    # The OAuth2 refresh-token credential, passed in-memory by the parent
+    # process. We use the same names the official google-ads SDK recognizes.
+    oauth_vars = {
+        "GOOGLE_ADS_CLIENT_ID": os.environ.get("GOOGLE_ADS_CLIENT_ID", ""),
+        "GOOGLE_ADS_CLIENT_SECRET": os.environ.get("GOOGLE_ADS_CLIENT_SECRET", ""),
+        "GOOGLE_ADS_REFRESH_TOKEN": os.environ.get("GOOGLE_ADS_REFRESH_TOKEN", ""),
+    }
+    missing = [name for name, value in oauth_vars.items() if not value]
+    if missing:
         raise ConfigError(
-            "GOOGLE_APPLICATION_CREDENTIALS is not set. The parent process is "
-            "responsible for writing an authorized_user JSON file and setting "
-            "this env var — see clio-idx api/utils/mcp_config.py:"
-            "build_google_ads_subprocess_env."
-        )
-    if not os.path.exists(credentials_path):
-        raise ConfigError(
-            f"GOOGLE_APPLICATION_CREDENTIALS path does not exist: {credentials_path!r}"
+            f"Missing required OAuth credential env var(s): {', '.join(sorted(missing))}. "
+            "The parent process is responsible for setting these — see clio-idx "
+            "api/utils/mcp_config.py:build_google_ads_subprocess_env."
         )
 
     developer_token = os.environ.get("GOOGLE_ADS_DEVELOPER_TOKEN", "")
@@ -61,7 +67,9 @@ def load_config() -> ServerConfig:
     )
 
     return ServerConfig(
-        credentials_path=credentials_path,
+        client_id=oauth_vars["GOOGLE_ADS_CLIENT_ID"],
+        client_secret=oauth_vars["GOOGLE_ADS_CLIENT_SECRET"],
+        refresh_token=oauth_vars["GOOGLE_ADS_REFRESH_TOKEN"],
         developer_token=developer_token,
         login_customer_id=login_customer_id,
     )

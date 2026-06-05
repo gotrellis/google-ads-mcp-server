@@ -10,17 +10,19 @@ Pairs with `clio-idx`'s `feat/google-ads-oauth` branch (and
 
 ## How it's wired
 
-clio-idx writes a per-connector `authorized_user` JSON file containing
-the OAuth `client_id` / `client_secret` / `refresh_token` and points
-`GOOGLE_APPLICATION_CREDENTIALS` at it, then spawns `google-ads-mcp`
-over stdio. This server reads those env vars, builds a
-`GoogleAdsClient`, and exposes tools via the MCP protocol.
+clio-idx passes the per-connector OAuth `client_id` / `client_secret` /
+`refresh_token` directly as environment variables (in-memory, no
+credentials file on disk), then spawns `google-ads-mcp` over stdio.
+This server reads those env vars, builds a `GoogleAdsClient`, and
+exposes tools via the MCP protocol.
 
 ### Required env vars
 
 | Var | Meaning |
 |---|---|
-| `GOOGLE_APPLICATION_CREDENTIALS` | Path to an `authorized_user` JSON file. |
+| `GOOGLE_ADS_CLIENT_ID` | OAuth2 client ID. |
+| `GOOGLE_ADS_CLIENT_SECRET` | OAuth2 client secret. |
+| `GOOGLE_ADS_REFRESH_TOKEN` | OAuth2 refresh token for the connected account. |
 | `GOOGLE_ADS_DEVELOPER_TOKEN` | Google Ads API developer token. |
 | `GOOGLE_ADS_LOGIN_CUSTOMER_ID` | Optional MCC customer ID. Only honored when numeric. |
 
