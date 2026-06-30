@@ -30,13 +30,23 @@ exposes tools via the MCP protocol.
 
 | Name | Purpose |
 |---|---|
-| `list_accessible_customers` | List customer accounts the user can access. |
-| `gaql_search` | Run a GAQL query against a specific customer. |
+| `list_accessible_customers` | List the customer accounts the authenticated user can access. |
+| `search` | Structured GAQL read: `resource` + `fields` (+ optional `conditions` / `orderings` / `limit`); the server assembles the GAQL. Rows are keyed by the selected dotted field names (enums as names). This is the read path clio-idx uses. |
+| `gaql_search` | Run a raw GAQL query string against a customer. |
+| `set_campaign_status` | Pause or enable a campaign (`CampaignService.mutate_campaigns`, `status` only). |
+| `update_campaign_budget` | Update a campaign budget's `amount_micros` (`CampaignBudgetService.mutate_campaign_budgets`). The budget is the shared `CampaignBudget` entity. |
 
-More tools (create_campaign, update_ad, etc.) are intended additions —
-each is a module in `src/google_ads_mcp/tools/` exporting `TOOL` and
-`call(client, arguments)`. Register by adding to `TOOL_MODULES` in
-`server.py`.
+Writes call the official `google-ads` SDK mutate services directly. Pass
+`validate_only=true` on a write for a dry run (the API validates without
+applying; no resource names are returned).
+
+### Adding a tool
+
+Drop a module in `src/google_ads_mcp/tools/` exporting `TOOL` (an
+`mcp.types.Tool`) and `call(client, arguments) -> list[TextContent]`, then add
+it to `TOOL_MODULES` in `server.py`. **Let errors propagate** — raise rather
+than returning an `{"error": ...}` payload — so the MCP SDK marks the result
+`isError=true`, which is how the parent (clio-idx) detects failures.
 
 ## Local install (for clio-idx development)
 
