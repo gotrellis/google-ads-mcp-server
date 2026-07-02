@@ -8,10 +8,13 @@ structured arguments (``customer_id``, ``fields``, ``resource`` + optional
 itself. There is deliberately NO raw ``query`` parameter — that is what the
 separate ``gaql_search`` tool is for.
 
-Output shape: one dict per row, keyed by the selected dotted field paths (e.g.
-``{"campaign.id": "1", "campaign.status": "ENABLED"}``) with enum values
-rendered as their names. This matches the official server's ``format_output_row``
-so downstream column names and values do not shift between the two servers.
+Output shape: one dict per row, keyed by exactly the requested ``fields`` (e.g.
+``{"campaign.id": 1, "campaign.status": "ENABLED"}``) with enum values rendered
+as their names. We format by the caller's ``fields`` — NOT the response
+``field_mask`` — because the API's field_mask omits id / resource-name fields
+(``campaign.id``, ``campaign.campaign_budget``, ...), which would silently blank
+the very columns a write action needs to target a customer/budget. For the same
+reason the query does not set ``omit_unselected_resource_names``.
 """
 
 from __future__ import annotations
@@ -78,9 +81,11 @@ def _build_query(
 ) -> str:
     """Assemble a GAQL query string from structured parts.
 
-    Mirrors the official server's builder, including the trailing
-    ``omit_unselected_resource_names`` parameter so the field mask (and thus the
-    returned columns) contains exactly the selected fields.
+    Deliberately does NOT append ``PARAMETERS omit_unselected_resource_names=true``:
+    that parameter makes the API drop id / resource-name fields (``campaign.id``,
+    ``campaign.campaign_budget``, ...) from the response field_mask, which blanked
+    those columns. Rows are formatted by the requested ``fields`` (see ``call``), so
+    the extra auto-returned resource_names are simply ignored.
     """
     parts = [f"SELECT {','.join(fields)} FROM {resource}"]
     if conditions:
@@ -89,7 +94,6 @@ def _build_query(
         parts.append(f" ORDER BY {','.join(orderings)}")
     if limit:
         parts.append(f" LIMIT {int(limit)}")
-    parts.append(" PARAMETERS omit_unselected_resource_names=true")
     return "".join(parts)
 
 
@@ -118,8 +122,9 @@ def _format_row(row: Any, paths: Any) -> dict[str, Any]:
 
 def call(client: Any, arguments: dict[str, Any]) -> list[TextContent]:
     customer_id = str(arguments["customer_id"]).replace("-", "")
+    fields = arguments["fields"]
     query = _build_query(
-        arguments["fields"],
+        fields,
         arguments["resource"],
         conditions=arguments.get("conditions"),
         orderings=arguments.get("orderings"),
@@ -131,9 +136,11 @@ def call(client: Any, arguments: dict[str, Any]) -> list[TextContent]:
         stream = service.search_stream(customer_id=customer_id, query=query)
         rows: list[dict[str, Any]] = []
         for batch in stream:
-            paths = batch.field_mask.paths
             for row in batch.results:
-                rows.append(_format_row(row, paths))
+                # Format by the REQUESTED fields, not batch.field_mask.paths: the API's
+                # field_mask omits id / resource-name fields, so relying on it drops
+                # campaign.id / campaign.campaign_budget and blanks the IDs writes need.
+                rows.append(_format_row(row, fields))
     except GoogleAdsException as exc:
         # Re-raise with a clean message; server.py lets it propagate so the SDK
         # marks the result isError=True (the parent relies on that to detect

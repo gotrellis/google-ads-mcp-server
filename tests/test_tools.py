@@ -26,11 +26,7 @@ def _payload(result):
 class BuildQueryTests(unittest.TestCase):
     def test_minimal_query(self):
         q = search._build_query(["campaign.id", "campaign.name"], "campaign")
-        self.assertEqual(
-            q,
-            "SELECT campaign.id,campaign.name FROM campaign"
-            " PARAMETERS omit_unselected_resource_names=true",
-        )
+        self.assertEqual(q, "SELECT campaign.id,campaign.name FROM campaign")
 
     def test_full_query(self):
         q = search._build_query(
@@ -45,8 +41,7 @@ class BuildQueryTests(unittest.TestCase):
             "SELECT campaign.id,metrics.clicks FROM campaign"
             " WHERE campaign.status = 'ENABLED' AND metrics.clicks > 0"
             " ORDER BY metrics.clicks DESC"
-            " LIMIT 10"
-            " PARAMETERS omit_unselected_resource_names=true",
+            " LIMIT 10",
         )
 
     def test_empty_clauses_are_omitted(self):
@@ -54,6 +49,37 @@ class BuildQueryTests(unittest.TestCase):
         self.assertNotIn("WHERE", q)
         self.assertNotIn("ORDER BY", q)
         self.assertNotIn("LIMIT", q)
+
+    def test_no_omit_unselected_resource_names(self):
+        # This parameter must NOT be present — it drops id / resource-name fields
+        # (campaign.id, campaign.campaign_budget) from the response field_mask.
+        q = search._build_query(["campaign.id"], "campaign")
+        self.assertNotIn("omit_unselected_resource_names", q)
+
+
+class FormatRowTests(unittest.TestCase):
+    def test_extracts_requested_nested_fields(self):
+        # _format_row reads exactly the requested dotted paths off the row — including
+        # the nested id / resource-name fields (customer.id, campaign.id,
+        # campaign.campaign_budget) that the API's field_mask omits.
+        row = SimpleNamespace(
+            customer=SimpleNamespace(id=123),
+            campaign=SimpleNamespace(
+                id=55, name="Summer", campaign_budget="customers/123/campaignBudgets/9"
+            ),
+        )
+        out = search._format_row(
+            row, ["customer.id", "campaign.id", "campaign.name", "campaign.campaign_budget"]
+        )
+        self.assertEqual(
+            out,
+            {
+                "customer.id": 123,
+                "campaign.id": 55,
+                "campaign.name": "Summer",
+                "campaign.campaign_budget": "customers/123/campaignBudgets/9",
+            },
+        )
 
 
 class FormatValueTests(unittest.TestCase):
