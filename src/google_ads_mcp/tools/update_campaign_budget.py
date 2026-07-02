@@ -88,10 +88,14 @@ def call(client: Any, arguments: dict[str, Any]) -> list[TextContent]:
     budget.amount_micros = amount_micros
     operation.update_mask.paths.append("amount_micros")
 
+    # validate_only is a field on the request message, NOT a kwarg of
+    # mutate_campaign_budgets() — build the request explicitly.
+    request = client.get_type("MutateCampaignBudgetsRequest")
+    request.customer_id = customer_id
+    request.operations.append(operation)
+    request.validate_only = validate_only
     try:
-        response = service.mutate_campaign_budgets(
-            customer_id=customer_id, operations=[operation], validate_only=validate_only
-        )
+        response = service.mutate_campaign_budgets(request=request)
     except GoogleAdsException as exc:
         raise RuntimeError(google_ads_error_message(exc)) from exc
 

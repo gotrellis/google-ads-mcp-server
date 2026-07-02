@@ -103,56 +103,61 @@ class SetCampaignStatusTests(unittest.TestCase):
         service = client.get_service.return_value
         service.campaign_path.return_value = result_name
         service.mutate_campaigns.return_value.results = [SimpleNamespace(resource_name=result_name)]
-        return client, service
+        operation = mock.MagicMock(name="CampaignOperation")
+        request = mock.MagicMock(name="MutateCampaignsRequest")
+        client.get_type.side_effect = lambda t: {
+            "CampaignOperation": operation,
+            "MutateCampaignsRequest": request,
+        }[t]
+        return client, service, operation, request
 
     def test_pause_sets_status_mask_and_calls_mutate(self):
-        client, service = self._client()
-        result = set_campaign_status.call(
-            client, {"customer_id": "123", "campaign_id": "55", "status": "PAUSED"}
-        )
+        client, service, operation, request = self._client()
+        result = set_campaign_status.call(client, {"customer_id": "123", "campaign_id": "55", "status": "PAUSED"})
 
         client.get_service.assert_called_with("CampaignService")
         service.campaign_path.assert_called_once_with("123", "55")
-        operation = client.get_type.return_value
         self.assertEqual(operation.update.resource_name, "customers/123/campaigns/55")
         client.enums.CampaignStatusEnum.__getitem__.assert_called_once_with("PAUSED")
         self.assertEqual(operation.update.status, client.enums.CampaignStatusEnum.__getitem__.return_value)
         operation.update_mask.paths.append.assert_called_once_with("status")
 
-        kwargs = service.mutate_campaigns.call_args.kwargs
-        self.assertEqual(kwargs["customer_id"], "123")
-        self.assertEqual(kwargs["operations"], [operation])
-        self.assertFalse(kwargs["validate_only"])
+        # validate_only lives on the request message; mutate is called with request=.
+        self.assertEqual(request.customer_id, "123")
+        request.operations.append.assert_called_once_with(operation)
+        self.assertFalse(request.validate_only)
+        service.mutate_campaigns.assert_called_once_with(request=request)
 
         payload = _payload(result)
         self.assertEqual(payload["status"], "PAUSED")
         self.assertEqual(payload["results"], ["customers/123/campaigns/55"])
         self.assertTrue(payload["mutated"])
 
-    def test_validate_only_reports_not_mutated(self):
-        client, service = self._client()
+    def test_validate_only_sets_request_flag(self):
+        client, service, _operation, request = self._client()
         service.mutate_campaigns.return_value.results = []  # validate_only returns no results
         result = set_campaign_status.call(
             client,
             {"customer_id": "123", "campaign_id": "55", "status": "ENABLED", "validate_only": True},
         )
-        self.assertTrue(service.mutate_campaigns.call_args.kwargs["validate_only"])
+        self.assertTrue(request.validate_only)
+        service.mutate_campaigns.assert_called_once_with(request=request)
         payload = _payload(result)
         self.assertTrue(payload["validate_only"])
         self.assertFalse(payload["mutated"])
 
     def test_status_is_normalized_uppercase(self):
-        client, _ = self._client()
+        client, *_ = self._client()
         set_campaign_status.call(client, {"customer_id": "123", "campaign_id": "55", "status": "paused"})
         client.enums.CampaignStatusEnum.__getitem__.assert_called_once_with("PAUSED")
 
     def test_dashes_stripped_from_customer_id(self):
-        client, service = self._client()
+        client, service, *_ = self._client()
         set_campaign_status.call(client, {"customer_id": "123-456-7890", "campaign_id": "55", "status": "PAUSED"})
         service.campaign_path.assert_called_once_with("1234567890", "55")
 
     def test_campaign_id_accepts_resource_name(self):
-        client, service = self._client()
+        client, service, *_ = self._client()
         set_campaign_status.call(
             client,
             {"customer_id": "123", "campaign_id": "customers/123/campaigns/55", "status": "PAUSED"},
@@ -160,7 +165,7 @@ class SetCampaignStatusTests(unittest.TestCase):
         service.campaign_path.assert_called_once_with("123", "55")
 
     def test_invalid_status_raises(self):
-        client, _ = self._client()
+        client, *_ = self._client()
         with self.assertRaises(ValueError):
             set_campaign_status.call(client, {"customer_id": "123", "campaign_id": "55", "status": "REMOVED"})
 
@@ -174,20 +179,29 @@ class UpdateCampaignBudgetTests(unittest.TestCase):
         service = client.get_service.return_value
         service.campaign_budget_path.return_value = result_name
         service.mutate_campaign_budgets.return_value.results = [SimpleNamespace(resource_name=result_name)]
-        return client, service
+        operation = mock.MagicMock(name="CampaignBudgetOperation")
+        request = mock.MagicMock(name="MutateCampaignBudgetsRequest")
+        client.get_type.side_effect = lambda t: {
+            "CampaignBudgetOperation": operation,
+            "MutateCampaignBudgetsRequest": request,
+        }[t]
+        return client, service, operation, request
 
     def test_updates_amount_mask_and_calls_mutate(self):
-        client, service = self._client()
+        client, service, operation, request = self._client()
         result = update_campaign_budget.call(
             client, {"customer_id": "123", "campaign_budget_id": "77", "amount_micros": 25000000}
         )
 
         client.get_service.assert_called_with("CampaignBudgetService")
         service.campaign_budget_path.assert_called_once_with("123", "77")
-        operation = client.get_type.return_value
         self.assertEqual(operation.update.amount_micros, 25000000)
         operation.update_mask.paths.append.assert_called_once_with("amount_micros")
-        self.assertFalse(service.mutate_campaign_budgets.call_args.kwargs["validate_only"])
+
+        self.assertEqual(request.customer_id, "123")
+        request.operations.append.assert_called_once_with(operation)
+        self.assertFalse(request.validate_only)
+        service.mutate_campaign_budgets.assert_called_once_with(request=request)
 
         payload = _payload(result)
         self.assertEqual(payload["amount_micros"], 25000000)
@@ -195,7 +209,7 @@ class UpdateCampaignBudgetTests(unittest.TestCase):
         self.assertTrue(payload["mutated"])
 
     def test_budget_id_extracted_from_resource_name(self):
-        client, service = self._client()
+        client, service, *_ = self._client()
         update_campaign_budget.call(
             client,
             {
@@ -207,28 +221,28 @@ class UpdateCampaignBudgetTests(unittest.TestCase):
         service.campaign_budget_path.assert_called_once_with("123", "77")
 
     def test_amount_string_is_coerced_to_int(self):
-        client, _ = self._client()
+        client, *_ = self._client()
         result = update_campaign_budget.call(
             client, {"customer_id": "123", "campaign_budget_id": "77", "amount_micros": "5000000"}
         )
         self.assertEqual(_payload(result)["amount_micros"], 5000000)
 
     def test_negative_amount_raises(self):
-        client, _ = self._client()
+        client, *_ = self._client()
         with self.assertRaises(ValueError):
             update_campaign_budget.call(
                 client, {"customer_id": "123", "campaign_budget_id": "77", "amount_micros": -1}
             )
 
     def test_non_numeric_amount_raises(self):
-        client, _ = self._client()
+        client, *_ = self._client()
         with self.assertRaises(ValueError):
             update_campaign_budget.call(
                 client, {"customer_id": "123", "campaign_budget_id": "77", "amount_micros": "lots"}
             )
 
     def test_validate_only_dry_run(self):
-        client, service = self._client()
+        client, service, _operation, request = self._client()
         service.mutate_campaign_budgets.return_value.results = []
         result = update_campaign_budget.call(
             client,
@@ -239,7 +253,7 @@ class UpdateCampaignBudgetTests(unittest.TestCase):
                 "validate_only": True,
             },
         )
-        self.assertTrue(service.mutate_campaign_budgets.call_args.kwargs["validate_only"])
+        self.assertTrue(request.validate_only)
         self.assertFalse(_payload(result)["mutated"])
 
 

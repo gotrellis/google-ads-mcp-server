@@ -76,10 +76,15 @@ def call(client: Any, arguments: dict[str, Any]) -> list[TextContent]:
     campaign.status = client.enums.CampaignStatusEnum[status]
     operation.update_mask.paths.append("status")
 
+    # validate_only is a field on the request message, NOT a kwarg of
+    # mutate_campaigns() (which only accepts customer_id/operations). Build the
+    # request explicitly so the dry-run flag is actually honored.
+    request = client.get_type("MutateCampaignsRequest")
+    request.customer_id = customer_id
+    request.operations.append(operation)
+    request.validate_only = validate_only
     try:
-        response = service.mutate_campaigns(
-            customer_id=customer_id, operations=[operation], validate_only=validate_only
-        )
+        response = service.mutate_campaigns(request=request)
     except GoogleAdsException as exc:
         raise RuntimeError(google_ads_error_message(exc)) from exc
 
