@@ -10,6 +10,7 @@ from . import (
     gaql_search,
     list_customers,
     search,
+    set_campaign_bidding_strategy,
     set_campaign_status,
     update_campaign_budget,
 )
@@ -18,6 +19,7 @@ __all__ = [
     "gaql_search",
     "list_customers",
     "search",
+    "set_campaign_bidding_strategy",
     "set_campaign_status",
     "update_campaign_budget",
 ]

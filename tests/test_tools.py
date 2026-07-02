@@ -10,7 +10,12 @@ import unittest
 from types import SimpleNamespace
 from unittest import mock
 
-from google_ads_mcp.tools import search, set_campaign_status, update_campaign_budget
+from google_ads_mcp.tools import (
+    search,
+    set_campaign_bidding_strategy,
+    set_campaign_status,
+    update_campaign_budget,
+)
 from google_ads_mcp.tools._errors import google_ads_error_message
 
 
@@ -250,6 +255,98 @@ class UpdateCampaignBudgetTests(unittest.TestCase):
                 "customer_id": "123",
                 "campaign_budget_id": "77",
                 "amount_micros": 5000000,
+                "validate_only": True,
+            },
+        )
+        self.assertTrue(request.validate_only)
+        self.assertFalse(_payload(result)["mutated"])
+
+
+# ── set_campaign_bidding_strategy ─────────────────────────────────────────────
+
+
+class BiddingStrategyTests(unittest.TestCase):
+    def _client(self):
+        client = mock.MagicMock()
+        service = client.get_service.return_value
+        service.campaign_path.return_value = "customers/123/campaigns/55"
+        service.mutate_campaigns.return_value.results = [SimpleNamespace(resource_name="customers/123/campaigns/55")]
+        operation = mock.MagicMock(name="CampaignOperation")
+        request = mock.MagicMock(name="MutateCampaignsRequest")
+
+        def get_type(type_name):
+            return {"CampaignOperation": operation, "MutateCampaignsRequest": request}.get(
+                type_name, mock.MagicMock(name=type_name)
+            )
+
+        client.get_type.side_effect = get_type
+        return client, service, operation, request
+
+    def test_maximize_conversions_with_target_cpa(self):
+        client, service, operation, request = self._client()
+        result = set_campaign_bidding_strategy.call(
+            client,
+            {
+                "customer_id": "123",
+                "campaign_id": "55",
+                "bidding_strategy": "MAXIMIZE_CONVERSIONS",
+                "target_cpa_micros": 50_000_000,
+            },
+        )
+        self.assertEqual(operation.update.maximize_conversions.target_cpa_micros, 50_000_000)
+        operation.update_mask.paths.append.assert_called_once_with("maximize_conversions")
+        request.operations.append.assert_called_once_with(operation)
+        service.mutate_campaigns.assert_called_once_with(request=request)
+        payload = _payload(result)
+        self.assertEqual(payload["bidding_strategy"], "MAXIMIZE_CONVERSIONS")
+        self.assertTrue(payload["mutated"])
+
+    def test_maximize_conversion_value_with_target_roas(self):
+        client, _service, operation, _request = self._client()
+        set_campaign_bidding_strategy.call(
+            client,
+            {
+                "customer_id": "123",
+                "campaign_id": "55",
+                "bidding_strategy": "MAXIMIZE_CONVERSION_VALUE",
+                "target_roas": 4.0,
+            },
+        )
+        self.assertEqual(operation.update.maximize_conversion_value.target_roas, 4.0)
+        operation.update_mask.paths.append.assert_called_once_with("maximize_conversion_value")
+
+    def test_manual_cpc_enhanced(self):
+        client, _service, operation, _request = self._client()
+        set_campaign_bidding_strategy.call(
+            client,
+            {"customer_id": "123", "campaign_id": "55", "bidding_strategy": "MANUAL_CPC", "enhanced_cpc": True},
+        )
+        self.assertTrue(operation.update.manual_cpc.enhanced_cpc_enabled)
+        operation.update_mask.paths.append.assert_called_once_with("manual_cpc")
+
+    def test_target_spend_maximize_clicks(self):
+        client, _service, operation, _request = self._client()
+        set_campaign_bidding_strategy.call(
+            client, {"customer_id": "123", "campaign_id": "55", "bidding_strategy": "TARGET_SPEND"}
+        )
+        operation.update_mask.paths.append.assert_called_once_with("target_spend")
+
+    def test_invalid_strategy_raises(self):
+        client, *_ = self._client()
+        with self.assertRaises(ValueError):
+            set_campaign_bidding_strategy.call(
+                client, {"customer_id": "123", "campaign_id": "55", "bidding_strategy": "MAGIC"}
+            )
+
+    def test_validate_only_dry_run(self):
+        client, service, _operation, request = self._client()
+        service.mutate_campaigns.return_value.results = []
+        result = set_campaign_bidding_strategy.call(
+            client,
+            {
+                "customer_id": "123",
+                "campaign_id": "55",
+                "bidding_strategy": "TARGET_SPEND",
                 "validate_only": True,
             },
         )

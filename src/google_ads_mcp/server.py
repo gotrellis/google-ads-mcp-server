@@ -34,6 +34,7 @@ from .tools import (
     gaql_search,
     list_customers,
     search,
+    set_campaign_bidding_strategy,
     set_campaign_status,
     update_campaign_budget,
 )
@@ -55,6 +56,7 @@ TOOL_MODULES = [
     # Writes
     set_campaign_status,
     update_campaign_budget,
+    set_campaign_bidding_strategy,
 ]
 
 

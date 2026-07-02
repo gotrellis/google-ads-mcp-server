@@ -35,6 +35,7 @@ exposes tools via the MCP protocol.
 | `gaql_search` | Run a raw GAQL query string against a customer. |
 | `set_campaign_status` | Pause or enable a campaign (`CampaignService.mutate_campaigns`, `status` only). |
 | `update_campaign_budget` | Update a campaign budget's `amount_micros` (`CampaignBudgetService.mutate_campaign_budgets`). The budget is the shared `CampaignBudget` entity. |
+| `set_campaign_bidding_strategy` | Switch a campaign's standard bidding strategy — `MANUAL_CPC`, `MAXIMIZE_CONVERSIONS` (+`target_cpa_micros`), `MAXIMIZE_CONVERSION_VALUE` (+`target_roas`), `TARGET_SPEND` (`CampaignService.mutate_campaigns`, bidding oneof). |
 
 Writes call the official `google-ads` SDK mutate services directly. Pass
 `validate_only=true` on a write for a dry run (the API validates without
