@@ -7,19 +7,27 @@ surfaces every tool in one place. (``_errors`` is a shared helper, not a tool.)
 """
 
 from . import (
+    apply_campaign_label,
+    create_label,
     gaql_search,
     list_customers,
+    remove_campaign_label,
     search,
     set_campaign_bidding_strategy,
     set_campaign_status,
+    update_campaign,
     update_campaign_budget,
 )
 
 __all__ = [
+    "apply_campaign_label",
+    "create_label",
     "gaql_search",
     "list_customers",
+    "remove_campaign_label",
     "search",
     "set_campaign_bidding_strategy",
     "set_campaign_status",
+    "update_campaign",
     "update_campaign_budget",
 ]

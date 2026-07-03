@@ -11,9 +11,13 @@ from types import SimpleNamespace
 from unittest import mock
 
 from google_ads_mcp.tools import (
+    apply_campaign_label,
+    create_label,
+    remove_campaign_label,
     search,
     set_campaign_bidding_strategy,
     set_campaign_status,
+    update_campaign,
     update_campaign_budget,
 )
 from google_ads_mcp.tools._errors import google_ads_error_message
@@ -373,6 +377,191 @@ class ErrorMessageTests(unittest.TestCase):
     def test_falls_back_to_str_when_no_messages(self):
         exc = SimpleNamespace(failure=SimpleNamespace(errors=[]), request_id=None)
         self.assertIn("Google Ads API error", google_ads_error_message(exc))
+
+
+class UpdateCampaignTests(unittest.TestCase):
+    def _client(self):
+        client = mock.MagicMock()
+        service = client.get_service.return_value
+        service.campaign_path.return_value = "customers/123/campaigns/55"
+        service.mutate_campaigns.return_value.results = [SimpleNamespace(resource_name="customers/123/campaigns/55")]
+        operation = mock.MagicMock(name="CampaignOperation")
+        request = mock.MagicMock(name="MutateCampaignsRequest")
+
+        def get_type(type_name):
+            return {"CampaignOperation": operation, "MutateCampaignsRequest": request}.get(
+                type_name, mock.MagicMock(name=type_name)
+            )
+
+        client.get_type.side_effect = get_type
+        return client, service, operation, request
+
+    def test_rename_sets_name_and_mask(self):
+        client, service, operation, request = self._client()
+        result = update_campaign.call(client, {"customer_id": "123", "campaign_id": "55", "name": "New Name"})
+        self.assertEqual(operation.update.name, "New Name")
+        operation.update_mask.paths.append.assert_called_once_with("name")
+        service.mutate_campaigns.assert_called_once_with(request=request)
+        payload = _payload(result)
+        self.assertEqual(payload["updated_fields"], ["name"])
+        self.assertTrue(payload["mutated"])
+
+    def test_dates_normalized_and_masked(self):
+        client, _service, operation, _request = self._client()
+        update_campaign.call(
+            client,
+            {"customer_id": "123", "campaign_id": "55", "start_date": "20260801", "end_date": "2026-09-30"},
+        )
+        # YYYYMMDD is normalized to the extended form; already-extended passes through.
+        self.assertEqual(operation.update.start_date, "2026-08-01")
+        self.assertEqual(operation.update.end_date, "2026-09-30")
+        self.assertEqual(operation.update_mask.paths.append.call_count, 2)
+
+    def test_requires_at_least_one_editable_field(self):
+        client, *_ = self._client()
+        with self.assertRaises(ValueError):
+            update_campaign.call(client, {"customer_id": "123", "campaign_id": "55"})
+
+    def test_malformed_date_raises(self):
+        client, *_ = self._client()
+        with self.assertRaises(ValueError):
+            update_campaign.call(client, {"customer_id": "123", "campaign_id": "55", "start_date": "Aug 1"})
+
+    def test_validate_only_dry_run(self):
+        client, service, _operation, request = self._client()
+        service.mutate_campaigns.return_value.results = []
+        payload = _payload(
+            update_campaign.call(
+                client, {"customer_id": "123", "campaign_id": "55", "name": "X", "validate_only": True}
+            )
+        )
+        self.assertTrue(request.validate_only)
+        self.assertTrue(payload["validate_only"])
+        self.assertFalse(payload["mutated"])
+
+
+class CreateLabelTests(unittest.TestCase):
+    def _client(self):
+        client = mock.MagicMock()
+        service = client.get_service.return_value
+        service.mutate_labels.return_value.results = [SimpleNamespace(resource_name="customers/123/labels/999")]
+        operation = mock.MagicMock(name="LabelOperation")
+        request = mock.MagicMock(name="MutateLabelsRequest")
+
+        def get_type(type_name):
+            return {"LabelOperation": operation, "MutateLabelsRequest": request}.get(
+                type_name, mock.MagicMock(name=type_name)
+            )
+
+        client.get_type.side_effect = get_type
+        return client, service, operation, request
+
+    def test_creates_label_and_returns_id(self):
+        client, service, operation, request = self._client()
+        result = create_label.call(
+            client,
+            {"customer_id": "1-2-3", "name": "High ROAS", "description": "d", "background_color": "#FF5733"},
+        )
+        self.assertEqual(operation.create.name, "High ROAS")
+        self.assertEqual(operation.create.text_label.description, "d")
+        self.assertEqual(operation.create.text_label.background_color, "#FF5733")
+        service.mutate_labels.assert_called_once_with(request=request)
+        payload = _payload(result)
+        self.assertEqual(payload["customer_id"], "123")
+        self.assertEqual(payload["label_resource_name"], "customers/123/labels/999")
+        self.assertEqual(payload["label_id"], "999")
+        self.assertTrue(payload["mutated"])
+
+    def test_blank_name_raises(self):
+        client, *_ = self._client()
+        with self.assertRaises(ValueError):
+            create_label.call(client, {"customer_id": "123", "name": "   "})
+
+    def test_validate_only_dry_run(self):
+        client, service, _operation, _request = self._client()
+        service.mutate_labels.return_value.results = []
+        payload = _payload(create_label.call(client, {"customer_id": "123", "name": "X", "validate_only": True}))
+        self.assertTrue(payload["validate_only"])
+        self.assertFalse(payload["mutated"])
+        self.assertIsNone(payload["label_id"])
+
+
+class ApplyCampaignLabelTests(unittest.TestCase):
+    def _client(self):
+        client = mock.MagicMock()
+        service = client.get_service.return_value
+        service.campaign_path.return_value = "customers/123/campaigns/55"
+        service.label_path.return_value = "customers/123/labels/999"
+        service.mutate_campaign_labels.return_value.results = [
+            SimpleNamespace(resource_name="customers/123/campaignLabels/55~999")
+        ]
+        operation = mock.MagicMock(name="CampaignLabelOperation")
+        request = mock.MagicMock(name="MutateCampaignLabelsRequest")
+
+        def get_type(type_name):
+            return {"CampaignLabelOperation": operation, "MutateCampaignLabelsRequest": request}.get(
+                type_name, mock.MagicMock(name=type_name)
+            )
+
+        client.get_type.side_effect = get_type
+        return client, service, operation, request
+
+    def test_applies_label_link(self):
+        client, service, operation, request = self._client()
+        result = apply_campaign_label.call(
+            client,
+            {"customer_id": "1-2-3", "campaign_id": "customers/123/campaigns/55", "label_id": "999"},
+        )
+        self.assertEqual(operation.create.campaign, "customers/123/campaigns/55")
+        self.assertEqual(operation.create.label, "customers/123/labels/999")
+        service.mutate_campaign_labels.assert_called_once_with(request=request)
+        payload = _payload(result)
+        self.assertEqual(payload["customer_id"], "123")
+        self.assertEqual(payload["campaign_id"], "55")
+        self.assertEqual(payload["label_id"], "999")
+        self.assertTrue(payload["mutated"])
+
+
+class RemoveCampaignLabelTests(unittest.TestCase):
+    def _client(self):
+        client = mock.MagicMock()
+        service = client.get_service.return_value
+        service.campaign_label_path.return_value = "customers/123/campaignLabels/55~999"
+        service.mutate_campaign_labels.return_value.results = [
+            SimpleNamespace(resource_name="customers/123/campaignLabels/55~999")
+        ]
+        operation = mock.MagicMock(name="CampaignLabelOperation")
+        request = mock.MagicMock(name="MutateCampaignLabelsRequest")
+
+        def get_type(type_name):
+            return {"CampaignLabelOperation": operation, "MutateCampaignLabelsRequest": request}.get(
+                type_name, mock.MagicMock(name=type_name)
+            )
+
+        client.get_type.side_effect = get_type
+        return client, service, operation, request
+
+    def test_removes_label_link(self):
+        client, service, operation, request = self._client()
+        result = remove_campaign_label.call(
+            client, {"customer_id": "123", "campaign_id": "55", "label_id": "999"}
+        )
+        service.campaign_label_path.assert_called_once_with("123", "55", "999")
+        self.assertEqual(operation.remove, "customers/123/campaignLabels/55~999")
+        service.mutate_campaign_labels.assert_called_once_with(request=request)
+        payload = _payload(result)
+        self.assertTrue(payload["mutated"])
+
+    def test_validate_only_dry_run(self):
+        client, service, _operation, _request = self._client()
+        service.mutate_campaign_labels.return_value.results = []
+        payload = _payload(
+            remove_campaign_label.call(
+                client, {"customer_id": "123", "campaign_id": "55", "label_id": "999", "validate_only": True}
+            )
+        )
+        self.assertTrue(payload["validate_only"])
+        self.assertFalse(payload["mutated"])
 
 
 if __name__ == "__main__":

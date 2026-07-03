@@ -23,7 +23,7 @@ import logging
 import sys
 from typing import Any
 
-from mcp.server import NotificationOptions, Server
+from mcp.server import Server
 from mcp.server.models import InitializationOptions
 from mcp.server.stdio import stdio_server
 from mcp.types import ServerCapabilities, TextContent, Tool, ToolsCapability
@@ -31,11 +31,15 @@ from mcp.types import ServerCapabilities, TextContent, Tool, ToolsCapability
 from .client import build_client
 from .config import load_config
 from .tools import (
+    apply_campaign_label,
+    create_label,
     gaql_search,
     list_customers,
+    remove_campaign_label,
     search,
     set_campaign_bidding_strategy,
     set_campaign_status,
+    update_campaign,
     update_campaign_budget,
 )
 
@@ -57,6 +61,10 @@ TOOL_MODULES = [
     set_campaign_status,
     update_campaign_budget,
     set_campaign_bidding_strategy,
+    update_campaign,
+    create_label,
+    apply_campaign_label,
+    remove_campaign_label,
 ]
 
 
