@@ -294,7 +294,7 @@ class BiddingStrategyTests(unittest.TestCase):
             },
         )
         self.assertEqual(operation.update.maximize_conversions.target_cpa_micros, 50_000_000)
-        operation.update_mask.paths.append.assert_called_once_with("maximize_conversions")
+        operation.update_mask.paths.append.assert_called_once_with("maximize_conversions.target_cpa_micros")
         request.operations.append.assert_called_once_with(operation)
         service.mutate_campaigns.assert_called_once_with(request=request)
         payload = _payload(result)
@@ -313,7 +313,7 @@ class BiddingStrategyTests(unittest.TestCase):
             },
         )
         self.assertEqual(operation.update.maximize_conversion_value.target_roas, 4.0)
-        operation.update_mask.paths.append.assert_called_once_with("maximize_conversion_value")
+        operation.update_mask.paths.append.assert_called_once_with("maximize_conversion_value.target_roas")
 
     def test_manual_cpc_enhanced(self):
         client, _service, operation, _request = self._client()
@@ -322,14 +322,14 @@ class BiddingStrategyTests(unittest.TestCase):
             {"customer_id": "123", "campaign_id": "55", "bidding_strategy": "MANUAL_CPC", "enhanced_cpc": True},
         )
         self.assertTrue(operation.update.manual_cpc.enhanced_cpc_enabled)
-        operation.update_mask.paths.append.assert_called_once_with("manual_cpc")
+        operation.update_mask.paths.append.assert_called_once_with("manual_cpc.enhanced_cpc_enabled")
 
     def test_target_spend_maximize_clicks(self):
         client, _service, operation, _request = self._client()
         set_campaign_bidding_strategy.call(
             client, {"customer_id": "123", "campaign_id": "55", "bidding_strategy": "TARGET_SPEND"}
         )
-        operation.update_mask.paths.append.assert_called_once_with("target_spend")
+        operation.update_mask.paths.append.assert_called_once_with("target_spend.cpc_bid_ceiling_micros")
 
     def test_invalid_strategy_raises(self):
         client, *_ = self._client()

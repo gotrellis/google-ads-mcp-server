@@ -3,8 +3,12 @@
 Sets the campaign-level (standard) bidding strategy via
 ``CampaignService.mutate_campaigns``. The bidding strategy is a ``oneof`` on the
 Campaign, so we select the chosen member (via ``copy_from`` of an empty message,
-which marks the oneof present) and put its field name in the update mask — that
-tells the API to switch to that strategy.
+which marks the oneof present) and put its *subfield* paths in the update mask.
+The mask must reference subfields (e.g. ``target_spend.cpc_bid_ceiling_micros``),
+never the parent message field ``target_spend`` — Google rejects a mask that
+points at a message with subfields (``FieldMaskError.FIELD_HAS_SUBFIELDS``).
+Masking a subfield of the selected member is what switches the strategy; any
+subfield left unset is written as its default (no target / no bid ceiling).
 
 Supported strategies (the modern standard set):
 
@@ -28,13 +32,16 @@ from mcp.types import TextContent, Tool
 
 from ._errors import google_ads_error_message
 
-# strategy name -> Campaign oneof field / its message type. The field name is also
-# the update-mask path that switches the campaign to that strategy.
-_STRATEGIES: dict[str, tuple[str, str]] = {
-    "MANUAL_CPC": ("manual_cpc", "ManualCpc"),
-    "MAXIMIZE_CONVERSIONS": ("maximize_conversions", "MaximizeConversions"),
-    "MAXIMIZE_CONVERSION_VALUE": ("maximize_conversion_value", "MaximizeConversionValue"),
-    "TARGET_SPEND": ("target_spend", "TargetSpend"),
+# strategy name -> (Campaign oneof field, its message type, mutable subfield paths
+# for the update mask). The mask must reference these *subfields*, never the parent
+# message field: Google rejects a mask path that points at a message that has
+# subfields (FieldMaskError.FIELD_HAS_SUBFIELDS). Masking a subfield of the selected
+# oneof member is what actually switches the campaign to that strategy.
+_STRATEGIES: dict[str, tuple[str, str, tuple[str, ...]]] = {
+    "MANUAL_CPC": ("manual_cpc", "ManualCpc", ("enhanced_cpc_enabled",)),
+    "MAXIMIZE_CONVERSIONS": ("maximize_conversions", "MaximizeConversions", ("target_cpa_micros",)),
+    "MAXIMIZE_CONVERSION_VALUE": ("maximize_conversion_value", "MaximizeConversionValue", ("target_roas",)),
+    "TARGET_SPEND": ("target_spend", "TargetSpend", ("cpc_bid_ceiling_micros",)),
 }
 
 
@@ -99,19 +106,25 @@ def call(client: Any, arguments: dict[str, Any]) -> list[TextContent]:
     campaign = operation.update
     campaign.resource_name = service.campaign_path(customer_id, campaign_id)
 
-    field, type_name = _STRATEGIES[strategy]
-    # Select the oneof by copying an empty message into it (marks it present even
-    # when it has no target), then set the optional target sub-field.
+    field, type_name, mask_subfields = _STRATEGIES[strategy]
+    # Select the oneof by copying an empty message into it — this marks the member
+    # present even when no target is set, which is what a bare switch (e.g. maximize
+    # clicks) needs.
     client.copy_from(getattr(campaign, field), client.get_type(type_name))
-    if strategy == "MANUAL_CPC" and arguments.get("enhanced_cpc") is not None:
-        campaign.manual_cpc.enhanced_cpc_enabled = bool(arguments["enhanced_cpc"])
+    if strategy == "MANUAL_CPC":
+        # eCPC defaults off; set it explicitly so the masked leaf carries a value.
+        campaign.manual_cpc.enhanced_cpc_enabled = bool(arguments.get("enhanced_cpc") or False)
     elif strategy == "MAXIMIZE_CONVERSIONS" and arguments.get("target_cpa_micros") is not None:
         campaign.maximize_conversions.target_cpa_micros = int(arguments["target_cpa_micros"])
     elif strategy == "MAXIMIZE_CONVERSION_VALUE" and arguments.get("target_roas") is not None:
         campaign.maximize_conversion_value.target_roas = float(arguments["target_roas"])
 
-    # The oneof field name is the mask path that switches the strategy.
-    operation.update_mask.paths.append(field)
+    # Mask the strategy's *subfields*, never the parent message field: a mask path
+    # that points at a message with subfields is rejected (FIELD_HAS_SUBFIELDS).
+    # Masking a subfield of the selected member switches the strategy; a subfield
+    # left unset is written as its default (no target CPA/ROAS, no bid ceiling).
+    for subfield in mask_subfields:
+        operation.update_mask.paths.append(f"{field}.{subfield}")
 
     request = client.get_type("MutateCampaignsRequest")
     request.customer_id = customer_id
