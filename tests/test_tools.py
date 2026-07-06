@@ -427,6 +427,14 @@ class UpdateCampaignTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             update_campaign.call(client, {"customer_id": "123", "campaign_id": "55", "start_date": "Aug 1"})
 
+    def test_impossible_calendar_date_raises(self):
+        # Shape-valid but not a real date must raise before the API call.
+        client, *_ = self._client()
+        with self.assertRaises(ValueError):
+            update_campaign.call(client, {"customer_id": "123", "campaign_id": "55", "start_date": "2026-13-45"})
+        with self.assertRaises(ValueError):
+            update_campaign.call(client, {"customer_id": "123", "campaign_id": "55", "end_date": "20261345"})
+
     def test_validate_only_dry_run(self):
         client, service, _operation, request = self._client()
         service.mutate_campaigns.return_value.results = []

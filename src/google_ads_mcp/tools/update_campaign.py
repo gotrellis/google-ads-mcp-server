@@ -16,7 +16,7 @@ validates the change without applying it and returns no resource names.
 from __future__ import annotations
 
 import json
-import re
+from datetime import datetime
 from typing import Any
 
 from google.ads.googleads.errors import GoogleAdsException
@@ -26,8 +26,6 @@ from ._errors import google_ads_error_message
 
 # Editable scalar fields, in a stable order for the update mask / response.
 _DATE_FIELDS = ("start_date", "end_date")
-_EXTENDED_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
-_BASIC_DATE_RE = re.compile(r"\d{8}")
 
 
 TOOL = Tool(
@@ -76,16 +74,17 @@ def _last_segment(value: Any) -> str:
 def _normalize_date(value: Any) -> str:
     """Accept YYYY-MM-DD or YYYYMMDD; return the extended YYYY-MM-DD form.
 
-    Google Ads accepts ISO 8601 basic (YYYYMMDD) or extended (YYYY-MM-DD); we
-    normalize to extended. Malformed input raises before the API call so the
-    caller gets a clear message instead of an opaque INVALID_ARGUMENT.
+    Uses ``strptime`` so the value must be a real calendar date — an impossible
+    date (month 13, day 32) raises here before the API call, giving a clear
+    message instead of an opaque INVALID_ARGUMENT.
     """
     s = str(value).strip()
-    if _BASIC_DATE_RE.fullmatch(s):
-        return f"{s[0:4]}-{s[4:6]}-{s[6:8]}"
-    if _EXTENDED_DATE_RE.fullmatch(s):
-        return s
-    raise ValueError(f"date must be YYYY-MM-DD (or YYYYMMDD), got {value!r}")
+    for fmt in ("%Y-%m-%d", "%Y%m%d"):
+        try:
+            return datetime.strptime(s, fmt).strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+    raise ValueError(f"date must be a real calendar date in YYYY-MM-DD (or YYYYMMDD), got {value!r}")
 
 
 def call(client: Any, arguments: dict[str, Any]) -> list[TextContent]:
