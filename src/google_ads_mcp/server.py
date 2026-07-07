@@ -19,19 +19,29 @@ needs to know what's available).
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import sys
 from typing import Any
 
-from mcp.server import NotificationOptions, Server
+from mcp.server import Server
 from mcp.server.models import InitializationOptions
 from mcp.server.stdio import stdio_server
 from mcp.types import ServerCapabilities, TextContent, Tool, ToolsCapability
 
 from .client import build_client
-from .config import ConfigError, load_config
-from .tools import gaql_search, list_customers
+from .config import load_config
+from .tools import (
+    apply_campaign_label,
+    create_label,
+    gaql_search,
+    list_customers,
+    remove_campaign_label,
+    search,
+    set_campaign_bidding_strategy,
+    set_campaign_status,
+    update_campaign,
+    update_campaign_budget,
+)
 
 # stderr-only — stdout is the MCP transport, polluting it breaks the protocol.
 logging.basicConfig(
@@ -42,7 +52,20 @@ logging.basicConfig(
 logger = logging.getLogger("google_ads_mcp")
 
 
-TOOL_MODULES = [list_customers, gaql_search]
+TOOL_MODULES = [
+    # Reads
+    list_customers,
+    search,
+    gaql_search,
+    # Writes
+    set_campaign_status,
+    update_campaign_budget,
+    set_campaign_bidding_strategy,
+    update_campaign,
+    create_label,
+    apply_campaign_label,
+    remove_campaign_label,
+]
 
 
 def _build_server() -> Server:
@@ -65,40 +88,26 @@ def _build_server() -> Server:
 
     @server.call_tool()
     async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
-        # Dispatch by tool name — keep this body small; per-tool logic lives
-        # in the tool module's ``call`` so each tool stays independently
-        # testable.
+        # Dispatch by tool name — keep this body small; per-tool logic lives in
+        # the tool module's ``call`` so each tool stays independently testable.
+        #
+        # Errors are NOT swallowed into a normal payload here. A raised
+        # exception is converted by the MCP SDK into a CallToolResult with
+        # isError=True (text = str(exc)) — which is how the parent (clio-idx)
+        # detects failures. Returning a {"error": ...} payload with isError
+        # unset would instead be read as a *successful* result, so e.g. a
+        # failed search would silently parse as one junk row. Config errors are
+        # re-raised too: their message is already actionable, and list_tools
+        # still succeeds because the client is built lazily (not during listing).
         for mod in TOOL_MODULES:
             if mod.TOOL.name == name:
                 try:
                     client = _get_client()
                     return mod.call(client, arguments)
-                except ConfigError as e:
-                    # Surface env-var problems as a tool-call error so the LLM
-                    # (and the parent's error UI) sees the actionable message
-                    # instead of a generic transport-level crash.
-                    return [
-                        TextContent(
-                            type="text",
-                            text=json.dumps({"error": str(e), "error_type": "ConfigError"}),
-                        )
-                    ]
-                except Exception as e:  # noqa: BLE001 — surface anything the API throws
+                except Exception:
                     logger.exception("tool %s failed", name)
-                    return [
-                        TextContent(
-                            type="text",
-                            text=json.dumps(
-                                {"error": str(e), "error_type": type(e).__name__}
-                            ),
-                        )
-                    ]
-        return [
-            TextContent(
-                type="text",
-                text=json.dumps({"error": f"Unknown tool: {name!r}"}),
-            )
-        ]
+                    raise
+        raise ValueError(f"Unknown tool: {name!r}")
 
     return server
 
