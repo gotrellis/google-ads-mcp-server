@@ -243,6 +243,14 @@ class UpdateCampaignBudgetTests(unittest.TestCase):
                 client, {"customer_id": "123", "campaign_budget_id": "77", "amount_micros": -1}
             )
 
+    def test_amount_over_ceiling_raises(self):
+        # ~$100M/day is far above the default backstop (~$10M) → rejected before the API.
+        client, *_ = self._client()
+        with self.assertRaises(ValueError):
+            update_campaign_budget.call(
+                client, {"customer_id": "123", "campaign_budget_id": "77", "amount_micros": 99_999_999_999_999}
+            )
+
     def test_non_numeric_amount_raises(self):
         client, *_ = self._client()
         with self.assertRaises(ValueError):
