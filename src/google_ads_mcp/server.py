@@ -39,6 +39,9 @@ from .tools import (
     search,
     set_campaign_bidding_strategy,
     set_campaign_status,
+    update_ad_group,
+    update_ad_group_ad,
+    update_ad_group_criterion,
     update_campaign,
     update_campaign_budget,
 )
@@ -57,7 +60,7 @@ TOOL_MODULES = [
     list_customers,
     search,
     gaql_search,
-    # Writes
+    # Writes — campaigns
     set_campaign_status,
     update_campaign_budget,
     set_campaign_bidding_strategy,
@@ -65,6 +68,10 @@ TOOL_MODULES = [
     create_label,
     apply_campaign_label,
     remove_campaign_label,
+    # Writes — ad groups / ads / keywords
+    update_ad_group,
+    update_ad_group_ad,
+    update_ad_group_criterion,
 ]
 
 
