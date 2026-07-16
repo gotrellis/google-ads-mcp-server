@@ -15,6 +15,9 @@ from . import (
     search,
     set_campaign_bidding_strategy,
     set_campaign_status,
+    update_ad_group,
+    update_ad_group_ad,
+    update_ad_group_criterion,
     update_campaign,
     update_campaign_budget,
 )
@@ -28,6 +31,9 @@ __all__ = [
     "search",
     "set_campaign_bidding_strategy",
     "set_campaign_status",
+    "update_ad_group",
+    "update_ad_group_ad",
+    "update_ad_group_criterion",
     "update_campaign",
     "update_campaign_budget",
 ]

@@ -16,12 +16,28 @@ A budget can be shared by several campaigns, so changing it affects all of them.
 from __future__ import annotations
 
 import json
+import os
 from typing import Any
 
 from google.ads.googleads.errors import GoogleAdsException
 from mcp.types import TextContent, Tool
 
 from ._errors import google_ads_error_message
+
+# Defense-in-depth backstop against an absurd / injected budget reaching a live account.
+# The parent (clio-idx) enforces the real, tighter ceiling; this only rejects clearly
+# out-of-range values on any path (incl. a direct chat-agent call). Override via
+# GOOGLE_ADS_MAX_BUDGET_MICROS (micros); default 10_000_000_000_000 (~$10M/day).
+_DEFAULT_MAX_BUDGET_MICROS = 10_000_000_000_000
+
+
+def _max_budget_micros() -> int:
+    """Upper bound for amount_micros: env ``GOOGLE_ADS_MAX_BUDGET_MICROS`` else the default."""
+    try:
+        value = int(os.environ.get("GOOGLE_ADS_MAX_BUDGET_MICROS", ""))
+    except (TypeError, ValueError):
+        return _DEFAULT_MAX_BUDGET_MICROS
+    return value if value > 0 else _DEFAULT_MAX_BUDGET_MICROS
 
 
 TOOL = Tool(
@@ -80,6 +96,12 @@ def call(client: Any, arguments: dict[str, Any]) -> list[TextContent]:
 
     if amount_micros < 0:
         raise ValueError(f"amount_micros must be >= 0, got {amount_micros}")
+    max_micros = _max_budget_micros()
+    if amount_micros > max_micros:
+        raise ValueError(
+            f"amount_micros {amount_micros} exceeds the safety ceiling {max_micros} "
+            f"(~{max_micros // 1_000_000:,} in account currency). Set GOOGLE_ADS_MAX_BUDGET_MICROS to raise it."
+        )
 
     service = client.get_service("CampaignBudgetService")
     operation = client.get_type("CampaignBudgetOperation")

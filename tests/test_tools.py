@@ -17,6 +17,9 @@ from google_ads_mcp.tools import (
     search,
     set_campaign_bidding_strategy,
     set_campaign_status,
+    update_ad_group,
+    update_ad_group_ad,
+    update_ad_group_criterion,
     update_campaign,
     update_campaign_budget,
 )
@@ -241,6 +244,14 @@ class UpdateCampaignBudgetTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             update_campaign_budget.call(
                 client, {"customer_id": "123", "campaign_budget_id": "77", "amount_micros": -1}
+            )
+
+    def test_amount_over_ceiling_raises(self):
+        # ~$100M/day is far above the default backstop (~$10M) → rejected before the API.
+        client, *_ = self._client()
+        with self.assertRaises(ValueError):
+            update_campaign_budget.call(
+                client, {"customer_id": "123", "campaign_budget_id": "77", "amount_micros": 99_999_999_999_999}
             )
 
     def test_non_numeric_amount_raises(self):
@@ -570,6 +581,204 @@ class RemoveCampaignLabelTests(unittest.TestCase):
         )
         self.assertTrue(payload["validate_only"])
         self.assertFalse(payload["mutated"])
+
+
+# ── update_ad_group ───────────────────────────────────────────────────────────
+
+
+class UpdateAdGroupTests(unittest.TestCase):
+    def _client(self, result_name="customers/123/adGroups/44"):
+        client = mock.MagicMock()
+        service = client.get_service.return_value
+        service.ad_group_path.return_value = result_name
+        service.mutate_ad_groups.return_value.results = [SimpleNamespace(resource_name=result_name)]
+        operation = mock.MagicMock(name="AdGroupOperation")
+        request = mock.MagicMock(name="MutateAdGroupsRequest")
+        client.get_type.side_effect = lambda t: {
+            "AdGroupOperation": operation,
+            "MutateAdGroupsRequest": request,
+        }[t]
+        return client, service, operation, request
+
+    def test_status_sets_mask_and_calls_mutate(self):
+        client, service, operation, request = self._client()
+        result = update_ad_group.call(client, {"customer_id": "123", "ad_group_id": "44", "status": "PAUSED"})
+
+        client.get_service.assert_called_with("AdGroupService")
+        service.ad_group_path.assert_called_once_with("123", "44")
+        self.assertEqual(operation.update.resource_name, "customers/123/adGroups/44")
+        client.enums.AdGroupStatusEnum.__getitem__.assert_called_once_with("PAUSED")
+        operation.update_mask.paths.append.assert_called_once_with("status")
+        request.operations.append.assert_called_once_with(operation)
+        service.mutate_ad_groups.assert_called_once_with(request=request)
+
+        payload = _payload(result)
+        self.assertEqual(payload["updated_fields"], ["status"])
+        self.assertTrue(payload["mutated"])
+
+    def test_rename_sets_name_mask(self):
+        client, _service, operation, _request = self._client()
+        update_ad_group.call(client, {"customer_id": "123", "ad_group_id": "44", "name": "New Name"})
+        self.assertEqual(operation.update.name, "New Name")
+        operation.update_mask.paths.append.assert_called_once_with("name")
+
+    def test_bid_sets_cpc_bid_micros_mask(self):
+        client, _service, operation, _request = self._client()
+        result = update_ad_group.call(client, {"customer_id": "123", "ad_group_id": "44", "cpc_bid_micros": 500000})
+        self.assertEqual(operation.update.cpc_bid_micros, 500000)
+        operation.update_mask.paths.append.assert_called_once_with("cpc_bid_micros")
+        self.assertEqual(_payload(result)["updated_fields"], ["cpc_bid_micros"])
+
+    def test_multiple_fields_masked_together(self):
+        client, _service, operation, _request = self._client()
+        result = update_ad_group.call(
+            client, {"customer_id": "123", "ad_group_id": "44", "status": "ENABLED", "cpc_bid_micros": 250000}
+        )
+        self.assertEqual(_payload(result)["updated_fields"], ["status", "cpc_bid_micros"])
+
+    def test_no_editable_field_raises(self):
+        client, *_ = self._client()
+        with self.assertRaises(ValueError):
+            update_ad_group.call(client, {"customer_id": "123", "ad_group_id": "44"})
+
+    def test_invalid_status_raises(self):
+        client, *_ = self._client()
+        with self.assertRaises(ValueError):
+            update_ad_group.call(client, {"customer_id": "123", "ad_group_id": "44", "status": "REMOVED"})
+
+    def test_bid_over_ceiling_raises(self):
+        client, *_ = self._client()
+        with self.assertRaises(ValueError):
+            update_ad_group.call(
+                client, {"customer_id": "123", "ad_group_id": "44", "cpc_bid_micros": 10_000_000_001}
+            )
+
+    def test_ad_group_id_accepts_resource_name(self):
+        client, service, *_ = self._client()
+        update_ad_group.call(
+            client, {"customer_id": "123", "ad_group_id": "customers/123/adGroups/44", "status": "PAUSED"}
+        )
+        service.ad_group_path.assert_called_once_with("123", "44")
+
+    def test_validate_only_sets_request_flag(self):
+        client, service, _operation, request = self._client()
+        service.mutate_ad_groups.return_value.results = []
+        result = update_ad_group.call(
+            client, {"customer_id": "123", "ad_group_id": "44", "status": "ENABLED", "validate_only": True}
+        )
+        self.assertTrue(request.validate_only)
+        payload = _payload(result)
+        self.assertTrue(payload["validate_only"])
+        self.assertFalse(payload["mutated"])
+
+
+# ── update_ad_group_ad ────────────────────────────────────────────────────────
+
+
+class UpdateAdGroupAdTests(unittest.TestCase):
+    def _client(self, result_name="customers/123/adGroupAds/44~88"):
+        client = mock.MagicMock()
+        service = client.get_service.return_value
+        service.ad_group_ad_path.return_value = result_name
+        service.mutate_ad_group_ads.return_value.results = [SimpleNamespace(resource_name=result_name)]
+        operation = mock.MagicMock(name="AdGroupAdOperation")
+        request = mock.MagicMock(name="MutateAdGroupAdsRequest")
+        client.get_type.side_effect = lambda t: {
+            "AdGroupAdOperation": operation,
+            "MutateAdGroupAdsRequest": request,
+        }[t]
+        return client, service, operation, request
+
+    def test_status_uses_compound_path_and_mask(self):
+        client, service, operation, request = self._client()
+        result = update_ad_group_ad.call(
+            client, {"customer_id": "123", "ad_group_id": "44", "ad_id": "88", "status": "PAUSED"}
+        )
+        client.get_service.assert_called_with("AdGroupAdService")
+        service.ad_group_ad_path.assert_called_once_with("123", "44", "88")
+        client.enums.AdGroupAdStatusEnum.__getitem__.assert_called_once_with("PAUSED")
+        operation.update_mask.paths.append.assert_called_once_with("status")
+        service.mutate_ad_group_ads.assert_called_once_with(request=request)
+        payload = _payload(result)
+        self.assertEqual(payload["ad_id"], "88")
+        self.assertEqual(payload["status"], "PAUSED")
+        self.assertTrue(payload["mutated"])
+
+    def test_status_normalized_uppercase(self):
+        client, *_ = self._client()
+        update_ad_group_ad.call(client, {"customer_id": "123", "ad_group_id": "44", "ad_id": "88", "status": "enabled"})
+        client.enums.AdGroupAdStatusEnum.__getitem__.assert_called_once_with("ENABLED")
+
+    def test_invalid_status_raises(self):
+        client, *_ = self._client()
+        with self.assertRaises(ValueError):
+            update_ad_group_ad.call(
+                client, {"customer_id": "123", "ad_group_id": "44", "ad_id": "88", "status": "REMOVED"}
+            )
+
+    def test_validate_only_sets_request_flag(self):
+        client, service, _operation, request = self._client()
+        service.mutate_ad_group_ads.return_value.results = []
+        result = update_ad_group_ad.call(
+            client,
+            {"customer_id": "123", "ad_group_id": "44", "ad_id": "88", "status": "ENABLED", "validate_only": True},
+        )
+        self.assertTrue(request.validate_only)
+        self.assertFalse(_payload(result)["mutated"])
+
+
+# ── update_ad_group_criterion ─────────────────────────────────────────────────
+
+
+class UpdateAdGroupCriterionTests(unittest.TestCase):
+    def _client(self, result_name="customers/123/adGroupCriteria/44~99"):
+        client = mock.MagicMock()
+        service = client.get_service.return_value
+        service.ad_group_criterion_path.return_value = result_name
+        service.mutate_ad_group_criteria.return_value.results = [SimpleNamespace(resource_name=result_name)]
+        operation = mock.MagicMock(name="AdGroupCriterionOperation")
+        request = mock.MagicMock(name="MutateAdGroupCriteriaRequest")
+        client.get_type.side_effect = lambda t: {
+            "AdGroupCriterionOperation": operation,
+            "MutateAdGroupCriteriaRequest": request,
+        }[t]
+        return client, service, operation, request
+
+    def test_status_uses_compound_path_and_mask(self):
+        client, service, operation, request = self._client()
+        result = update_ad_group_criterion.call(
+            client, {"customer_id": "123", "ad_group_id": "44", "criterion_id": "99", "status": "PAUSED"}
+        )
+        client.get_service.assert_called_with("AdGroupCriterionService")
+        service.ad_group_criterion_path.assert_called_once_with("123", "44", "99")
+        client.enums.AdGroupCriterionStatusEnum.__getitem__.assert_called_once_with("PAUSED")
+        operation.update_mask.paths.append.assert_called_once_with("status")
+        service.mutate_ad_group_criteria.assert_called_once_with(request=request)
+        payload = _payload(result)
+        self.assertEqual(payload["criterion_id"], "99")
+        self.assertEqual(payload["updated_fields"], ["status"])
+
+    def test_bid_sets_cpc_bid_micros_mask(self):
+        client, _service, operation, _request = self._client()
+        result = update_ad_group_criterion.call(
+            client, {"customer_id": "123", "ad_group_id": "44", "criterion_id": "99", "cpc_bid_micros": 750000}
+        )
+        self.assertEqual(operation.update.cpc_bid_micros, 750000)
+        operation.update_mask.paths.append.assert_called_once_with("cpc_bid_micros")
+        self.assertEqual(_payload(result)["updated_fields"], ["cpc_bid_micros"])
+
+    def test_no_editable_field_raises(self):
+        client, *_ = self._client()
+        with self.assertRaises(ValueError):
+            update_ad_group_criterion.call(client, {"customer_id": "123", "ad_group_id": "44", "criterion_id": "99"})
+
+    def test_bid_over_ceiling_raises(self):
+        client, *_ = self._client()
+        with self.assertRaises(ValueError):
+            update_ad_group_criterion.call(
+                client,
+                {"customer_id": "123", "ad_group_id": "44", "criterion_id": "99", "cpc_bid_micros": 10_000_000_001},
+            )
 
 
 if __name__ == "__main__":
