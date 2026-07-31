@@ -11,6 +11,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 from google_ads_mcp.tools import (
+    add_negative_keyword,
     apply_campaign_label,
     create_label,
     remove_campaign_label,
@@ -779,6 +780,108 @@ class UpdateAdGroupCriterionTests(unittest.TestCase):
                 client,
                 {"customer_id": "123", "ad_group_id": "44", "criterion_id": "99", "cpc_bid_micros": 10_000_000_001},
             )
+
+
+# ── add_negative_keyword ──────────────────────────────────────────────────────
+
+
+class AddNegativeKeywordTests(unittest.TestCase):
+    def _client(self):
+        client = mock.MagicMock()
+        service = client.get_service.return_value
+        service.ad_group_path.return_value = "customers/123/adGroups/44"
+        service.campaign_path.return_value = "customers/123/campaigns/55"
+        service.mutate_ad_group_criteria.return_value.results = [
+            SimpleNamespace(resource_name="customers/123/adGroupCriteria/44~1")
+        ]
+        service.mutate_campaign_criteria.return_value.results = [
+            SimpleNamespace(resource_name="customers/123/campaignCriteria/55~2")
+        ]
+        ag_op = mock.MagicMock(name="AdGroupCriterionOperation")
+        ag_req = mock.MagicMock(name="MutateAdGroupCriteriaRequest")
+        c_op = mock.MagicMock(name="CampaignCriterionOperation")
+        c_req = mock.MagicMock(name="MutateCampaignCriteriaRequest")
+        client.get_type.side_effect = lambda t: {
+            "AdGroupCriterionOperation": ag_op,
+            "MutateAdGroupCriteriaRequest": ag_req,
+            "CampaignCriterionOperation": c_op,
+            "MutateCampaignCriteriaRequest": c_req,
+        }[t]
+        return client, service, ag_op, ag_req, c_op, c_req
+
+    def test_ad_group_negative_defaults_exact(self):
+        client, service, ag_op, ag_req, *_ = self._client()
+        result = add_negative_keyword.call(client, {"customer_id": "123", "ad_group_id": "44", "text": "cheap"})
+
+        client.get_service.assert_called_with("AdGroupCriterionService")
+        service.ad_group_path.assert_called_once_with("123", "44")
+        self.assertEqual(ag_op.create.ad_group, "customers/123/adGroups/44")
+        self.assertTrue(ag_op.create.negative)
+        self.assertEqual(ag_op.create.keyword.text, "cheap")
+        client.enums.KeywordMatchTypeEnum.__getitem__.assert_called_once_with("EXACT")  # default
+        service.mutate_ad_group_criteria.assert_called_once_with(request=ag_req)
+
+        payload = _payload(result)
+        self.assertEqual(payload["level"], "ad_group")
+        self.assertEqual(payload["ad_group_id"], "44")
+        self.assertIsNone(payload["campaign_id"])
+        self.assertEqual(payload["match_type"], "EXACT")
+        self.assertTrue(payload["negative"])
+        self.assertTrue(payload["mutated"])
+
+    def test_campaign_negative_normalizes_match_type(self):
+        client, service, _agop, _agreq, c_op, c_req = self._client()
+        result = add_negative_keyword.call(
+            client, {"customer_id": "123", "campaign_id": "55", "text": "free stuff", "match_type": "phrase"}
+        )
+        client.get_service.assert_called_with("CampaignCriterionService")
+        service.campaign_path.assert_called_once_with("123", "55")
+        self.assertTrue(c_op.create.negative)
+        self.assertEqual(c_op.create.keyword.text, "free stuff")
+        client.enums.KeywordMatchTypeEnum.__getitem__.assert_called_once_with("PHRASE")  # normalized upper
+        service.mutate_campaign_criteria.assert_called_once_with(request=c_req)
+
+        payload = _payload(result)
+        self.assertEqual(payload["level"], "campaign")
+        self.assertEqual(payload["campaign_id"], "55")
+        self.assertIsNone(payload["ad_group_id"])
+
+    def test_requires_exactly_one_target(self):
+        client, *_ = self._client()
+        with self.assertRaises(ValueError):  # neither
+            add_negative_keyword.call(client, {"customer_id": "123", "text": "x"})
+        with self.assertRaises(ValueError):  # both
+            add_negative_keyword.call(
+                client, {"customer_id": "123", "ad_group_id": "44", "campaign_id": "55", "text": "x"}
+            )
+
+    def test_invalid_match_type_raises(self):
+        client, *_ = self._client()
+        with self.assertRaises(ValueError):
+            add_negative_keyword.call(
+                client, {"customer_id": "123", "ad_group_id": "44", "text": "x", "match_type": "NEAR"}
+            )
+
+    def test_empty_text_raises(self):
+        client, *_ = self._client()
+        with self.assertRaises(ValueError):
+            add_negative_keyword.call(client, {"customer_id": "123", "ad_group_id": "44", "text": "   "})
+
+    def test_overlong_text_raises(self):
+        client, *_ = self._client()
+        with self.assertRaises(ValueError):
+            add_negative_keyword.call(client, {"customer_id": "123", "campaign_id": "55", "text": "x" * 81})
+
+    def test_validate_only_sets_request_flag(self):
+        client, service, _agop, ag_req, *_ = self._client()
+        service.mutate_ad_group_criteria.return_value.results = []
+        result = add_negative_keyword.call(
+            client, {"customer_id": "123", "ad_group_id": "44", "text": "cheap", "validate_only": True}
+        )
+        self.assertTrue(ag_req.validate_only)
+        payload = _payload(result)
+        self.assertTrue(payload["validate_only"])
+        self.assertFalse(payload["mutated"])
 
 
 if __name__ == "__main__":
