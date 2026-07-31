@@ -7,6 +7,7 @@ surfaces every tool in one place. (``_errors`` is a shared helper, not a tool.)
 """
 
 from . import (
+    add_negative_keyword,
     apply_campaign_label,
     create_label,
     gaql_search,
@@ -23,6 +24,7 @@ from . import (
 )
 
 __all__ = [
+    "add_negative_keyword",
     "apply_campaign_label",
     "create_label",
     "gaql_search",

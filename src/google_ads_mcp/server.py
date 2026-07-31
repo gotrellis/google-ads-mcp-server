@@ -31,6 +31,7 @@ from mcp.types import ServerCapabilities, TextContent, Tool, ToolsCapability
 from .client import build_client
 from .config import load_config
 from .tools import (
+    add_negative_keyword,
     apply_campaign_label,
     create_label,
     gaql_search,
@@ -72,6 +73,7 @@ TOOL_MODULES = [
     update_ad_group,
     update_ad_group_ad,
     update_ad_group_criterion,
+    add_negative_keyword,
 ]
 
 
