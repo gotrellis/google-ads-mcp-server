@@ -15,6 +15,7 @@ from google_ads_mcp.tools import (
     apply_campaign_label,
     create_label,
     remove_campaign_label,
+    remove_negative_keyword,
     search,
     set_campaign_bidding_strategy,
     set_campaign_status,
@@ -882,6 +883,81 @@ class AddNegativeKeywordTests(unittest.TestCase):
         payload = _payload(result)
         self.assertTrue(payload["validate_only"])
         self.assertFalse(payload["mutated"])
+
+
+# ── remove_negative_keyword ───────────────────────────────────────────────────
+
+
+class RemoveNegativeKeywordTests(unittest.TestCase):
+    def _client(self):
+        client = mock.MagicMock()
+        service = client.get_service.return_value
+        service.ad_group_criterion_path.return_value = "customers/123/adGroupCriteria/44~99"
+        service.campaign_criterion_path.return_value = "customers/123/campaignCriteria/55~99"
+        service.mutate_ad_group_criteria.return_value.results = [
+            SimpleNamespace(resource_name="customers/123/adGroupCriteria/44~99")
+        ]
+        service.mutate_campaign_criteria.return_value.results = [
+            SimpleNamespace(resource_name="customers/123/campaignCriteria/55~99")
+        ]
+        ag_op = mock.MagicMock(name="AdGroupCriterionOperation")
+        ag_req = mock.MagicMock(name="MutateAdGroupCriteriaRequest")
+        c_op = mock.MagicMock(name="CampaignCriterionOperation")
+        c_req = mock.MagicMock(name="MutateCampaignCriteriaRequest")
+        client.get_type.side_effect = lambda t: {
+            "AdGroupCriterionOperation": ag_op,
+            "MutateAdGroupCriteriaRequest": ag_req,
+            "CampaignCriterionOperation": c_op,
+            "MutateCampaignCriteriaRequest": c_req,
+        }[t]
+        return client, service, ag_op, ag_req, c_op, c_req
+
+    def test_ad_group_remove_uses_remove_op(self):
+        client, service, ag_op, ag_req, *_ = self._client()
+        result = remove_negative_keyword.call(client, {"customer_id": "123", "ad_group_id": "44", "criterion_id": "99"})
+
+        client.get_service.assert_called_with("AdGroupCriterionService")
+        service.ad_group_criterion_path.assert_called_once_with("123", "44", "99")
+        self.assertEqual(ag_op.remove, "customers/123/adGroupCriteria/44~99")
+        service.mutate_ad_group_criteria.assert_called_once_with(request=ag_req)
+
+        payload = _payload(result)
+        self.assertEqual(payload["level"], "ad_group")
+        self.assertEqual(payload["criterion_id"], "99")
+        self.assertTrue(payload["mutated"])
+
+    def test_campaign_remove_uses_remove_op(self):
+        client, service, _agop, _agreq, c_op, c_req = self._client()
+        result = remove_negative_keyword.call(client, {"customer_id": "123", "campaign_id": "55", "criterion_id": "99"})
+
+        client.get_service.assert_called_with("CampaignCriterionService")
+        service.campaign_criterion_path.assert_called_once_with("123", "55", "99")
+        self.assertEqual(c_op.remove, "customers/123/campaignCriteria/55~99")
+        service.mutate_campaign_criteria.assert_called_once_with(request=c_req)
+        self.assertEqual(_payload(result)["level"], "campaign")
+
+    def test_requires_exactly_one_target(self):
+        client, *_ = self._client()
+        with self.assertRaises(ValueError):
+            remove_negative_keyword.call(client, {"customer_id": "123", "criterion_id": "99"})
+        with self.assertRaises(ValueError):
+            remove_negative_keyword.call(
+                client, {"customer_id": "123", "ad_group_id": "44", "campaign_id": "55", "criterion_id": "99"}
+            )
+
+    def test_missing_criterion_id_raises(self):
+        client, *_ = self._client()
+        with self.assertRaises(ValueError):
+            remove_negative_keyword.call(client, {"customer_id": "123", "campaign_id": "55"})
+
+    def test_validate_only_sets_request_flag(self):
+        client, service, _agop, ag_req, *_ = self._client()
+        service.mutate_ad_group_criteria.return_value.results = []
+        result = remove_negative_keyword.call(
+            client, {"customer_id": "123", "ad_group_id": "44", "criterion_id": "99", "validate_only": True}
+        )
+        self.assertTrue(ag_req.validate_only)
+        self.assertFalse(_payload(result)["mutated"])
 
 
 if __name__ == "__main__":
