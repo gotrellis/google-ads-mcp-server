@@ -37,6 +37,7 @@ from .tools import (
     gaql_search,
     list_customers,
     remove_campaign_label,
+    remove_negative_keyword,
     search,
     set_campaign_bidding_strategy,
     set_campaign_status,
@@ -74,6 +75,7 @@ TOOL_MODULES = [
     update_ad_group_ad,
     update_ad_group_criterion,
     add_negative_keyword,
+    remove_negative_keyword,
 ]
 
 
