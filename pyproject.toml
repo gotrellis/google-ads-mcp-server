@@ -12,7 +12,7 @@ requires-python = ">=3.10"
 authors = [{ name = "Trellis", email = "engineering@gotrellis.com" }]
 dependencies = [
     # MCP SDK — official Python implementation.
-    "mcp>=1.0.0",
+    "mcp>=1.0.0,<2.0.0",  # 2.x removed Server.list_tools/call_tool
     # Google Ads + Google OAuth client.
     "google-ads>=23.1.0",
     "google-auth>=2.0.0",

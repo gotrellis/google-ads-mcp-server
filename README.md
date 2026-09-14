@@ -40,6 +40,11 @@ exposes tools via the MCP protocol.
 | `create_label` | Create an account-level `Label` (`LabelService.mutate_labels`); optional `description` / `background_color`. Returns the new `label_id`. |
 | `apply_campaign_label` | Attach an existing label to a campaign — `campaign_id` + `label_id` (`CampaignLabelService.mutate_campaign_labels`, create). |
 | `remove_campaign_label` | Detach a label from a campaign — `campaign_id` + `label_id` (`CampaignLabelService.mutate_campaign_labels`, remove). |
+| `update_ad_group` | Edit an ad group — any of `status` (ENABLED/PAUSED), `name`, `cpc_bid_micros`. Masks only the fields provided (`AdGroupService.mutate_ad_groups`). |
+| `update_ad_group_ad` | Pause or enable an individual ad — `ad_group_id` + `ad_id`, `status` only (`AdGroupAdService.mutate_ad_group_ads`). Does not edit creative. |
+| `update_ad_group_criterion` | Edit a keyword criterion — any of `status`, `cpc_bid_micros`; addressed by `ad_group_id` + `criterion_id` (`AdGroupCriterionService.mutate_ad_group_criteria`). |
+| `add_negative_keyword` | Add a negative keyword at ad-group level (`AdGroupCriterionService`) or campaign level (`CampaignCriterionService`) — pass exactly one of `ad_group_id` / `campaign_id`. `match_type` EXACT/PHRASE/BROAD, default EXACT. |
+| `remove_negative_keyword` | Remove a negative keyword — exactly one of `ad_group_id` / `campaign_id`, plus the `criterion_id` from a read where `negative=true`. |
 
 Writes call the official `google-ads` SDK mutate services directly. Pass
 `validate_only=true` on a write for a dry run (the API validates without
@@ -69,3 +74,19 @@ google-ads-mcp = { path = "../google-ads-mcp-server", editable = true }
 
 Then `uv sync` and the `google-ads-mcp` executable appears in
 `.venv/bin/`.
+
+## Tests
+
+```bash
+uv run python -m unittest discover -s tests
+```
+
+`tests/test_server.py` builds the server for real, so an `mcp` release that
+changes the decorator API fails the suite instead of only failing at runtime.
+
+### MCP SDK version
+
+The `mcp` dependency is capped at `<2.0.0`. `mcp` 2.x removed the
+`Server.list_tools()` / `Server.call_tool()` decorators this server registers
+its handlers with, so `_build_server()` raises `AttributeError` on startup
+under 2.x. Lifting the cap means porting `server.py` to the 2.x API first.
