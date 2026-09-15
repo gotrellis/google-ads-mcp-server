@@ -11,8 +11,13 @@ license = { text = "MIT" }
 requires-python = ">=3.10"
 authors = [{ name = "Trellis", email = "engineering@gotrellis.com" }]
 dependencies = [
-    # MCP SDK — official Python implementation.
-    "mcp>=1.0.0,<2.0.0",  # 2.x removed Server.list_tools/call_tool
+    # MCP SDK — official Python implementation. Floor is 2.0 because server.py
+    # registers its handlers through the constructor (on_list_tools /
+    # on_call_tool); 1.x had decorators instead and cannot run this code.
+    # clio-idx installs this package into its own virtualenv, so this range is
+    # also what clio-idx resolves — it moved to mcp 2.x with fastmcp 4 in the
+    # same release that introduced this pin.
+    "mcp>=2.0.0,<3.0.0",
     # Google Ads + Google OAuth client.
     "google-ads>=23.1.0",
     "google-auth>=2.0.0",
