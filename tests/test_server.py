@@ -40,11 +40,11 @@ class ToolRegistryTests(unittest.TestCase):
         for mod in TOOL_MODULES:
             with self.subTest(tool=mod.TOOL.name):
                 self.assertTrue(mod.TOOL.description)
-                self.assertEqual(mod.TOOL.inputSchema.get("type"), "object")
+                self.assertEqual(mod.TOOL.input_schema.get("type"), "object")
 
     def test_required_fields_are_declared_in_properties(self):
         for mod in TOOL_MODULES:
-            schema = mod.TOOL.inputSchema
+            schema = mod.TOOL.input_schema
             properties = schema.get("properties", {})
             for field in schema.get("required", []):
                 with self.subTest(tool=mod.TOOL.name, field=field):

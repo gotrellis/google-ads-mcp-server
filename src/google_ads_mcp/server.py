@@ -24,9 +24,8 @@ import sys
 from typing import Any
 
 from mcp.server import Server
-from mcp.server.models import InitializationOptions
 from mcp.server.stdio import stdio_server
-from mcp.types import ServerCapabilities, TextContent, Tool, ToolsCapability
+from mcp.types import CallToolResult, ListToolsResult, TextContent, Tool
 
 from .client import build_client
 from .config import load_config
@@ -57,6 +56,9 @@ logging.basicConfig(
 logger = logging.getLogger("google_ads_mcp")
 
 
+SERVER_NAME = "google-ads-mcp"
+SERVER_VERSION = "0.1.0"
+
 TOOL_MODULES = [
     # Reads
     list_customers,
@@ -80,8 +82,6 @@ TOOL_MODULES = [
 
 
 def _build_server() -> Server:
-    server: Server = Server("google-ads-mcp")
-
     # Lazy client — first tool call builds it. Lets list_tools succeed even
     # if env-var config is bad, so the LLM gets a clear "Google Ads tools
     # are available" signal before any auth issue surfaces.
@@ -93,48 +93,59 @@ def _build_server() -> Server:
             state["client"] = build_client(config)
         return state["client"]
 
-    @server.list_tools()
-    async def list_tools() -> list[Tool]:
-        return [mod.TOOL for mod in TOOL_MODULES]
-
-    @server.call_tool()
-    async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
+    def _dispatch(name: str, arguments: dict[str, Any]) -> list[TextContent]:
         # Dispatch by tool name — keep this body small; per-tool logic lives in
         # the tool module's ``call`` so each tool stays independently testable.
-        #
-        # Errors are NOT swallowed into a normal payload here. A raised
-        # exception is converted by the MCP SDK into a CallToolResult with
-        # isError=True (text = str(exc)) — which is how the parent (clio-idx)
-        # detects failures. Returning a {"error": ...} payload with isError
-        # unset would instead be read as a *successful* result, so e.g. a
-        # failed search would silently parse as one junk row. Config errors are
-        # re-raised too: their message is already actionable, and list_tools
-        # still succeeds because the client is built lazily (not during listing).
+        # Failures raise; ``on_call_tool`` below turns them into an error
+        # result. Config errors raise too: their message is already actionable,
+        # and list_tools still succeeds because the client is built lazily
+        # (not during listing).
         for mod in TOOL_MODULES:
             if mod.TOOL.name == name:
-                try:
-                    client = _get_client()
-                    return mod.call(client, arguments)
-                except Exception:
-                    logger.exception("tool %s failed", name)
-                    raise
+                client = _get_client()
+                return mod.call(client, arguments)
         raise ValueError(f"Unknown tool: {name!r}")
 
-    return server
+    async def on_list_tools(ctx: Any, params: Any) -> ListToolsResult:
+        return ListToolsResult(tools=[mod.TOOL for mod in TOOL_MODULES])
+
+    async def on_call_tool(ctx: Any, params: Any) -> CallToolResult:
+        # A failure MUST come back as isError=True carrying the message: that
+        # is how the parent (clio-idx) tells a failed call from a successful
+        # one. Returning a {"error": ...} payload with isError unset would be
+        # read as a *success*, so e.g. a failed search would silently parse as
+        # one junk row.
+        #
+        # Under mcp 1.x the SDK did this conversion itself, wrapping whatever
+        # the handler raised. 2.x does not: an exception that escapes here
+        # becomes a JSON-RPC INTERNAL_ERROR whose message is deliberately
+        # replaced with a generic string so handler internals never reach the
+        # wire — which would strip exactly the detail the parent surfaces to
+        # the model. So catch and convert explicitly.
+        try:
+            return CallToolResult(content=_dispatch(params.name, params.arguments or {}))
+        except Exception as exc:
+            logger.exception("tool %s failed", params.name)
+            # Some exceptions stringify empty (a bare KeyError()), and a blank
+            # error message tells the model nothing.
+            text = str(exc) or type(exc).__name__
+            return CallToolResult(content=[TextContent(type="text", text=text)], isError=True)
+
+    return Server(
+        SERVER_NAME,
+        version=SERVER_VERSION,
+        on_list_tools=on_list_tools,
+        on_call_tool=on_call_tool,
+    )
 
 
 async def _serve() -> None:
     server = _build_server()
     async with stdio_server() as (read_stream, write_stream):
-        await server.run(
-            read_stream,
-            write_stream,
-            InitializationOptions(
-                server_name="google-ads-mcp",
-                server_version="0.1.0",
-                capabilities=ServerCapabilities(tools=ToolsCapability(listChanged=False)),
-            ),
-        )
+        # Capabilities are derived from the handlers actually registered rather
+        # than hand-built, so the server can never advertise something it has
+        # no handler for.
+        await server.run(read_stream, write_stream, server.create_initialization_options())
 
 
 def run() -> None:
